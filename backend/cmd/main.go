@@ -27,21 +27,20 @@ func main() {
 	protected.Use(auth.AuthMiddleware)
 
 	protected.HandleFunc("/frames", frames.GetFrames).Methods("GET")
-	protected.HandleFunc("/frames", frames.CreateFrame).Methods("POST")
+	protected.HandleFunc("/create", frames.CreateFrame).Methods("POST")
 	protected.HandleFunc("/orders", orders.CreateOrder).Methods("POST")
 	protected.HandleFunc("/favorites/{frame_id:[0-9]+}", favorites.AddToFavorites).Methods("POST")
 	protected.HandleFunc("/favorites", favorites.GetFavorites).Methods("GET")
-	protected.HandleFunc("/frames", auth.RoleMiddleware("Admin", frames.UpdateFrame)).Methods("PUT")
-	protected.HandleFunc("/frames", frames.GetFrames).Methods("GET")
-	protected.HandleFunc("/frames", frames.CreateFrame).Methods("POST")
 	protected.HandleFunc("/frames/{id:[0-9]+}", frames.UpdateFrame).Methods("PUT")
+	protected.HandleFunc("/frames/{id:[0-9]+}", auth.RoleMiddleware("Admin", frames.UpdateFrame)).Methods("PUT")
 	protected.HandleFunc("/frames/{id:[0-9]+}", frames.DeleteFrame).Methods("DELETE")
+
 
 	r.Use(mux.CORSMethodMiddleware(r))
 	r.Use(func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 			if r.Method == "OPTIONS" {
 				return
