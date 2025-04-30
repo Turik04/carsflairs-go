@@ -5,14 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings" // Добавлен импорт пакета strings
 	"time"
 
-	"github.com/golang-jwt/jwt"
+	"github.com/golang-jwt/jwt/v4"
 	"golang.org/x/crypto/bcrypt"
 )
 
-var secretKey = []byte("yourjwtsecret")
+var secretKey = []byte("yourjwtsecret") // тот же ключ!
 
 type User struct {
 	ID       int    `json:"id"`
@@ -24,107 +23,64 @@ type User struct {
 type Claims struct {
 	ID   int    `json:"id"`
 	Role string `json:"role"`
-	jwt.StandardClaims
+	jwt.RegisteredClaims
 }
 
-// Регистрация
+// Регистрация (всегда с ролью "User")
 func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	var user User
-	err := json.NewDecoder(r.Body).Decode(&user)
-	if err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
 		http.Error(w, "Invalid input", http.StatusBadRequest)
 		return
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
-	if err != nil {
-		http.Error(w, "Error hashing password", http.StatusInternalServerError)
-		return
-	}
+	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
 
-	_, err = db.DB.Exec("INSERT INTO users (username, password, role) VALUES ($1, $2, $3)", user.Username, hashedPassword, "User")
+	role := "User"
+	_, err := db.DB.Exec("INSERT INTO users (username, password, role) VALUES ($1, $2, $3)", user.Username, hashedPassword, role)
 	if err != nil {
-		http.Error(w, "Error inserting user into database", http.StatusInternalServerError)
+		http.Error(w, "Error inserting user", http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	fmt.Fprintf(w, "User registered successfully")
+	fmt.Fprint(w, "User registered successfully")
 }
 
 // Логин
 func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	var user User
-	err := json.NewDecoder(r.Body).Decode(&user)
-	if err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
 		http.Error(w, "Invalid input", http.StatusBadRequest)
 		return
 	}
 
-	var storedUser User
-	err = db.DB.QueryRow("SELECT id, username, password, role FROM users WHERE username=$1", user.Username).Scan(
-		&storedUser.ID, &storedUser.Username, &storedUser.Password, &storedUser.Role)
-	if err != nil {
+	var stored User
+	err := db.DB.QueryRow("SELECT id, username, password, role FROM users WHERE username=$1", user.Username).Scan(
+		&stored.ID, &stored.Username, &stored.Password, &stored.Role,
+	)
+	if err != nil || bcrypt.CompareHashAndPassword([]byte(stored.Password), []byte(user.Password)) != nil {
 		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
 		return
 	}
 
-	err = bcrypt.CompareHashAndPassword([]byte(storedUser.Password), []byte(user.Password))
-	if err != nil {
-		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
-		return
-	}
-
-	if storedUser.Username == "Turik" && storedUser.Role != "Admin" {
-		_, err = db.DB.Exec("UPDATE users SET role=$1 WHERE id=$2", "Admin", storedUser.ID)
+	// Если это Turik — автоматически делаем его админом
+	if stored.Username == "Turik" && stored.Role != "Admin" {
+		_, err := db.DB.Exec("UPDATE users SET role=$1 WHERE id=$2", "Admin", stored.ID)
 		if err == nil {
-			storedUser.Role = "Admin"
+			stored.Role = "Admin"
 		}
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, Claims{
-		ID:   storedUser.ID,
-		Role: storedUser.Role,
-		StandardClaims: jwt.StandardClaims{
-			ExpiresAt: time.Now().Add(time.Minute * 15).Unix(),
+		ID:   stored.ID,
+		Role: stored.Role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
 		},
 	})
+	tokenString, _ := token.SignedString(secretKey)
 
-	tokenString, err := token.SignedString(secretKey)
-	if err != nil {
-		http.Error(w, "Error generating token", http.StatusInternalServerError)
-		return
-	}
-
-	// w.().Set("Authorization", "Bearer "+tokenString)
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"token": tokenString})
-	w.WriteHeader(http.StatusOK)
-	// fmt.Fprintf(w, "User logged in successfully")
-}
-
-func AuthMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			http.Error(w, "Missing token", http.StatusUnauthorized)
-			return
-		}
-
-		// Убираем "Bearer " из токена
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-
-		claims := &Claims{}
-
-		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-			return secretKey, nil
-		})
-
-		if err != nil || !token.Valid {
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
-			return
-		}
-
-		// Если токен валиден — продолжаем обработку
-		next.ServeHTTP(w, r)
-	})
 }

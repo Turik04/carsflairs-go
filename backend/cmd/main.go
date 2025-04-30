@@ -23,19 +23,22 @@ func main() {
 	r.HandleFunc("/register", auth.RegisterHandler).Methods("POST")
 	r.HandleFunc("/login", auth.LoginHandler).Methods("POST")
 
+	// Защищённые маршруты (все требуют токен)
 	protected := r.PathPrefix("/api").Subrouter()
-	protected.Use(auth.AuthMiddleware)
+	protected.Use(auth.Middleware)
 
+	// Доступ для всех авторизованных пользователей
 	protected.HandleFunc("/frames", frames.GetFrames).Methods("GET")
-	protected.HandleFunc("/create", frames.CreateFrame).Methods("POST")
 	protected.HandleFunc("/orders", orders.CreateOrder).Methods("POST")
-	protected.HandleFunc("/favorites/{frame_id:[0-9]+}", favorites.AddToFavorites).Methods("POST")
 	protected.HandleFunc("/favorites", favorites.GetFavorites).Methods("GET")
-	protected.HandleFunc("/frames/{id:[0-9]+}", frames.UpdateFrame).Methods("PUT")
+	protected.HandleFunc("/favorites/{frame_id:[0-9]+}", favorites.AddToFavorites).Methods("POST")
+
+	// Только для админа (используем RoleMiddleware на каждый маршрут)
+	protected.HandleFunc("/create", auth.RoleMiddleware("Admin", frames.CreateFrame)).Methods("POST")
 	protected.HandleFunc("/frames/{id:[0-9]+}", auth.RoleMiddleware("Admin", frames.UpdateFrame)).Methods("PUT")
-	protected.HandleFunc("/frames/{id:[0-9]+}", frames.DeleteFrame).Methods("DELETE")
+	protected.HandleFunc("/frames/{id:[0-9]+}", auth.RoleMiddleware("Admin", frames.DeleteFrame)).Methods("DELETE")
 
-
+	// CORS
 	r.Use(mux.CORSMethodMiddleware(r))
 	r.Use(func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,10 +52,10 @@ func main() {
 		})
 	})
 
-	fmt.Println("Server is running on port 8080...")
+	fmt.Println("Server is running on port 8081...")
 	log.Fatal(http.ListenAndServe(":8081", r))
 }
 
 func HomeHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Welcome to Carsflairs API!")
+	fmt.Fprintln(w, "Welcome to Carsflairs API!")
 }
